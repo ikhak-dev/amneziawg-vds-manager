@@ -7,10 +7,12 @@
 ## Версия
 
 ```text
-v2.0
+v3.0
 ```
 
-В версии `v2.0` добавлена отправка клиентских `.conf` файлов на e-mail через внешний SMTP.
+Версия менеджера `v3.0` создаёт конфигурации для протокола **AmneziaWG 3.1** и сохраняет отправку клиентских `.conf` файлов через внешний SMTP.
+
+Профиль 3.1 включает `HeaderProtectionKey`, случайное дополнение трафика, изменяемые интервалы, `RandomTrailers` и `DisableCookies`. Клиентские приложения старых версий такой конфиг не поддерживают.
 
 ## Схема сети
 
@@ -34,16 +36,20 @@ VDS      10.66.0.1
 - отправка клиентского `.conf` файла на e-mail через внешний SMTP;
 - включение IPv4 forwarding;
 - NAT через `iptables`;
+- профиль обфускации AmneziaWG 3.1;
+- проверка установленной версии `awg` перед созданием конфигурации;
+- обновление существующей установки с резервной копией конфигов;
 - режимы клиента:
   - только VPN-сетка `10.66.0.0/24`;
   - весь интернет через VDS.
 
-<img width="669" height="501" alt="image" src="https://github.com/user-attachments/assets/261a790a-4c12-4e91-84ca-5c57d44fa519" />
+<img width="651" height="484" alt="Снимок2" src="https://github.com/user-attachments/assets/fdf1fe69-8376-41f6-89a5-6af9c6a47df2" />
+
 
 ## Быстрый запуск
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ikhak-dev/amneziawg-vds-manager/main/amneziawg-vds-manager.sh -o amneziawg-vds-manager.sh
+curl -fsSL https://raw.githubusercontent.com/ikhak-dev/amneziawg-vds-manager/v3.0/amneziawg-vds-manager.sh -o amneziawg-vds-manager.sh
 chmod +x amneziawg-vds-manager.sh
 sudo bash amneziawg-vds-manager.sh
 ```
@@ -58,7 +64,7 @@ apt install -y curl ca-certificates
 
 rm -f amneziawg-vds-manager.sh
 
-curl -fsSL "https://raw.githubusercontent.com/ikhak-dev/amneziawg-vds-manager/main/amneziawg-vds-manager.sh?cache=$(date +%s)" -o amneziawg-vds-manager.sh
+curl -fsSL "https://raw.githubusercontent.com/ikhak-dev/amneziawg-vds-manager/v3.0/amneziawg-vds-manager.sh?cache=$(date +%s)" -o amneziawg-vds-manager.sh
 
 chmod +x amneziawg-vds-manager.sh
 
@@ -80,13 +86,15 @@ OK
 
 ## Поддерживаемые ОС
 
-Проверялось/рассчитано на:
+Основная поддерживаемая система:
 
 ```text
-Debian / Ubuntu с systemd и apt
+Ubuntu с systemd и apt
 ```
 
-На Debian используется PPA AmneziaWG через отдельный keyring:
+Debian 12/13 поддерживается в экспериментальном режиме: скрипт использует Ubuntu `focal` PPA, поэтому совместимость пакета и DKMS зависит от текущего ядра. После установки обязательно проверь `awg --version`, `/sys/module/amneziawg/version` и запуск `awg0`.
+
+PPA подключается через отдельный keyring:
 
 ```text
 /etc/apt/keyrings/amnezia-ppa.gpg
@@ -94,6 +102,18 @@ Debian / Ubuntu с systemd и apt
 ```
 
 Скрипт не должен использовать `apt-key` и не должен ставить `resolvconf`.
+
+## Исправления после code review
+
+В `v3.0` учтены основные замечания из [issue #2](https://github.com/ikhak-dev/amneziawg-vds-manager/issues/2):
+
+- безопасное удаление peer-блока с проверкой маркеров и резервной копией;
+- учёт занятых адресов и в клиентских, и в серверном конфиге;
+- корректный IPv6 `Endpoint` и блокировка IPv6-утечки в full-tunnel;
+- reload конфигурации без обязательного разрыва всех сессий;
+- проверка IPv4, DNS и SMTP-полей;
+- implicit TLS для SMTP-порта 465;
+- удаление UFW-правила, почтовых секретов и опциональная очистка PPA при uninstall.
 
 ## Что открыть у провайдера
 
@@ -203,7 +223,7 @@ cat /root/amneziawg-clients/ИМЯ_КОНФИГА.conf
 
 ## Отправка конфига на e-mail
 
-В версии `v2.0` добавлена отправка клиентских `.conf` файлов на e-mail через внешний SMTP.
+Отправка клиентских `.conf` файлов на e-mail выполняется через внешний SMTP.
 
 В меню доступны пункты:
 
@@ -260,15 +280,41 @@ SMTP password / app password: пароль приложения Google
 
 Отправка напрямую с VDS без внешнего SMTP не используется и не рекомендуется: письма могут попадать в спам или отклоняться почтовыми сервисами.
 
+## Обновление существующего сервера до AmneziaWG 3.1
+
+Сначала обнови сам менеджер, запусти его и выбери:
+
+```text
+11) Обновить существующую установку до AmneziaWG 3.1
+```
+
+Скрипт обновит пакет из PPA, проверит вывод `awg --version`, создаст резервную копию в `/root/amneziawg-backups/`, заменит параметры протокола в серверном и сохранённых клиентских конфигах и перезапустит `awg0`.
+
+После обновления повторно импортируй конфиг на каждом устройстве. Старые копии конфигов подключаться не будут, потому что параметры 3.1 должны совпадать на обеих сторонах.
+
+Проверка загруженного модуля и инструментов:
+
+```bash
+awg --version
+cat /sys/module/amneziawg/version
+```
+
+Ожидается версия `3.1.x`. Если проверка версии не проходит, скрипт останавливает обновление до изменения конфигов.
+
 ## Какой клиент использовать
 
-Нужен клиент с поддержкой AmneziaWG, например AmneziaVPN / AmneziaWG.
+Нужен клиент с поддержкой AmneziaWG 3.1, например AmneziaVPN `5.0.1.5` или новее либо нативный клиент AmneziaWG 3.1.
 
 Обычный WireGuard-клиент может не принять конфиг, потому что в нём есть параметры AmneziaWG:
 
 ```text
-Jc, Jmin, Jmax, S1, S2, S3, S4, H1, H2, H3, H4
+Jc, Jmin, Jmax, S1-S4, H1-H4, HeaderProtectionKey,
+ContentPaddingAddition, RekeyAfterTime, RekeyTimeout,
+RejectAfterTime, KeepaliveTimeout, MaxHandshakeAttempts,
+RandomTrailers, DisableCookies
 ```
+
+Маршрутизаторы и старые приложения, которые поддерживают только AmneziaWG 2.0, с новым профилем не совместимы.
 
 ## Проверка работы
 
@@ -348,7 +394,7 @@ sudo apt update
 ```bash
 rm -f amneziawg-vds-manager.sh
 
-curl -fsSL "https://raw.githubusercontent.com/ikhak-dev/amneziawg-vds-manager/main/amneziawg-vds-manager.sh?cache=$(date +%s)" -o amneziawg-vds-manager.sh
+curl -fsSL "https://raw.githubusercontent.com/ikhak-dev/amneziawg-vds-manager/v3.0/amneziawg-vds-manager.sh?cache=$(date +%s)" -o amneziawg-vds-manager.sh
 
 chmod +x amneziawg-vds-manager.sh
 bash -n amneziawg-vds-manager.sh && echo "OK"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Тестовая версия: добавление отправки клиентских конфигов на e-mail
+# AmneziaWG 3.1 profile with e-mail delivery of client configs
 # AmneziaWG VDS Manager
 # Ubuntu/Debian helper for installing/removing AmneziaWG and managing client configs.
 # Run as root: sudo bash amneziawg-vds-manager.sh
@@ -7,6 +7,8 @@
 set -Eeuo pipefail
 
 APP_NAME="AmneziaWG VDS Manager"
+MANAGER_VERSION="3.0"
+AWG_PROTOCOL_VERSION="3.1"
 
 AWG_IFACE="awg0"
 AWG_DIR="/etc/amnezia/amneziawg"
@@ -30,6 +32,7 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+DARK_ORANGE='\033[38;5;130m'
 NC='\033[0m'
 
 log() { echo -e "${GREEN}[+]${NC} $*"; }
@@ -96,6 +99,15 @@ load_vars() {
   AWG_H2="${AWG_H2:-22222222}"
   AWG_H3="${AWG_H3:-33333333}"
   AWG_H4="${AWG_H4:-44444444}"
+  AWG_HEADER_PROTECTION_KEY="${AWG_HEADER_PROTECTION_KEY:-}"
+  AWG_CONTENT_PADDING_ADDITION="${AWG_CONTENT_PADDING_ADDITION:-16-64}"
+  AWG_REKEY_AFTER_TIME="${AWG_REKEY_AFTER_TIME:-3000-4000}"
+  AWG_REKEY_TIMEOUT="${AWG_REKEY_TIMEOUT:-5-10}"
+  AWG_REJECT_AFTER_TIME="${AWG_REJECT_AFTER_TIME:-180-190}"
+  AWG_KEEPALIVE_TIMEOUT="${AWG_KEEPALIVE_TIMEOUT:-8-15}"
+  AWG_MAX_HANDSHAKE_ATTEMPTS="${AWG_MAX_HANDSHAKE_ATTEMPTS:-15}"
+  AWG_RANDOM_TRAILERS="${AWG_RANDOM_TRAILERS:-on}"
+  AWG_DISABLE_COOKIES="${AWG_DISABLE_COOKIES:-on}"
 }
 
 save_vars() {
@@ -119,6 +131,15 @@ AWG_H1="$AWG_H1"
 AWG_H2="$AWG_H2"
 AWG_H3="$AWG_H3"
 AWG_H4="$AWG_H4"
+AWG_HEADER_PROTECTION_KEY="$AWG_HEADER_PROTECTION_KEY"
+AWG_CONTENT_PADDING_ADDITION="$AWG_CONTENT_PADDING_ADDITION"
+AWG_REKEY_AFTER_TIME="$AWG_REKEY_AFTER_TIME"
+AWG_REKEY_TIMEOUT="$AWG_REKEY_TIMEOUT"
+AWG_REJECT_AFTER_TIME="$AWG_REJECT_AFTER_TIME"
+AWG_KEEPALIVE_TIMEOUT="$AWG_KEEPALIVE_TIMEOUT"
+AWG_MAX_HANDSHAKE_ATTEMPTS="$AWG_MAX_HANDSHAKE_ATTEMPTS"
+AWG_RANDOM_TRAILERS="$AWG_RANDOM_TRAILERS"
+AWG_DISABLE_COOKIES="$AWG_DISABLE_COOKIES"
 EOF
   chmod 600 "$MANAGER_CONF"
 }
@@ -137,7 +158,25 @@ detect_public_ip() {
 }
 
 valid_ip_or_host() {
-  [[ "$1" =~ ^[A-Za-z0-9._:-]+$ ]]
+  local value="$1"
+  [[ "$value" != *$'\n'* && "$value" != *$'\r'* ]] || return 1
+  if [[ "$value" =~ ^[0-9.]+$ ]]; then
+    valid_ipv4 "$value"
+  elif [[ "$value" == *:* ]]; then
+    [[ "$value" =~ ^[0-9A-Fa-f:]+$ && "$value" == *:* ]]
+  else
+    [[ "$value" =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$ ]]
+  fi
+}
+
+valid_ipv4() {
+  local ip="$1" octet
+  local -a octets
+  [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
+  IFS='.' read -r -a octets <<< "$ip"
+  for octet in "${octets[@]}"; do
+    (( 10#$octet <= 255 )) || return 1
+  done
 }
 
 valid_port() {
@@ -149,46 +188,61 @@ valid_client_name() {
 }
 
 valid_email() {
-  [[ "$1" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]]
+  [[ "$1" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]
 }
 
 valid_ipv4_cidr_24() {
-  [[ "$1" =~ ^([0-9]{1,3}\.){3}0/24$ ]]
+  [[ "$1" == */24 ]] || return 1
+  local network="${1%/24}"
+  valid_ipv4 "$network" && [[ "$network" == *.0 ]]
+}
+
+safe_single_line() {
+  [[ -n "$1" ]] && [[ "$1" != *$'\n'* ]] && [[ "$1" != *$'\r'* ]]
+}
+
+valid_smtp_value() {
+  safe_single_line "$1" && [[ "$1" =~ ^[A-Za-z0-9@._%+:/=-]+$ ]]
+}
+
+format_endpoint_host() {
+  local host="$1"
+  if [[ "$host" == *:* && "$host" != \[*\] ]]; then
+    printf '[%s]' "$host"
+  else
+    printf '%s' "$host"
+  fi
 }
 
 installed() {
   [[ -f "$AWG_CONF" ]] && command_exists awg && command_exists awg-quick
 }
 
-random_header() {
-  shuf -i 10000000-2147483647 -n 1
-}
-
 generate_awg_params() {
   AWG_JC="$(shuf -i 4-12 -n 1)"
   AWG_JMIN="$(shuf -i 8-24 -n 1)"
   AWG_JMAX="$(shuf -i 64-128 -n 1)"
-  AWG_S1="$(shuf -i 40-120 -n 1)"
-  AWG_S2="$(shuf -i 130-220 -n 1)"
-  AWG_S3="0"
-  AWG_S4="0"
+  local padding_size
+  padding_size="$(shuf -i 32-64 -n 1)"
+  AWG_S1="$padding_size"
+  AWG_S2="$padding_size"
+  AWG_S3="$padding_size"
+  AWG_S4="$padding_size"
 
-  local h
-  declare -A used=()
-  for h in 1 2 3 4; do
-    local value
-    while true; do
-      value="$(random_header)"
-      [[ -z "${used[$value]:-}" ]] && break
-    done
-    used[$value]=1
-    case "$h" in
-      1) AWG_H1="$value" ;;
-      2) AWG_H2="$value" ;;
-      3) AWG_H3="$value" ;;
-      4) AWG_H4="$value" ;;
-    esac
-  done
+  # Header Protection replaces custom message identifiers in AWG 3.1.
+  AWG_H1="1"
+  AWG_H2="2"
+  AWG_H3="3"
+  AWG_H4="4"
+  AWG_HEADER_PROTECTION_KEY="$(head -c 32 /dev/urandom | base64 | tr -d '\n')"
+  AWG_CONTENT_PADDING_ADDITION="16-64"
+  AWG_REKEY_AFTER_TIME="3000-4000"
+  AWG_REKEY_TIMEOUT="5-10"
+  AWG_REJECT_AFTER_TIME="180-190"
+  AWG_KEEPALIVE_TIMEOUT="8-15"
+  AWG_MAX_HANDSHAKE_ATTEMPTS="15"
+  AWG_RANDOM_TRAILERS="on"
+  AWG_DISABLE_COOKIES="on"
 }
 
 ask_install_params() {
@@ -228,8 +282,14 @@ ask_install_params() {
 
   read -rp "DNS #1 для клиентов [$DEFAULT_DNS1]: " input || true
   DNS1="${input:-$DEFAULT_DNS1}"
+  while ! valid_ipv4 "$DNS1"; do
+    read -rp "Введите корректный IPv4-адрес DNS #1: " DNS1
+  done
   read -rp "DNS #2 для клиентов [$DEFAULT_DNS2]: " input || true
   DNS2="${input:-$DEFAULT_DNS2}"
+  while ! valid_ipv4 "$DNS2"; do
+    read -rp "Введите корректный IPv4-адрес DNS #2: " DNS2
+  done
 
   generate_awg_params
   save_vars
@@ -288,6 +348,17 @@ install_amneziawg_packages() {
     err "После установки не найдены awg/awg-quick. Проверьте вывод apt."
     exit 1
   fi
+}
+
+require_awg31() {
+  local version
+  version="$(awg --version 2>/dev/null || true)"
+  if [[ ! "$version" =~ v?3\.1([.-]|$) ]]; then
+    err "Установлен пакет без поддержки AmneziaWG 3.1: ${version:-версия не определена}"
+    err "Проверьте актуальность пакетов в PPA amnezia/ppa."
+    return 1
+  fi
+  info "Версия инструментов: $version"
 }
 
 write_systemd_unit() {
@@ -357,6 +428,15 @@ H1 = $AWG_H1
 H2 = $AWG_H2
 H3 = $AWG_H3
 H4 = $AWG_H4
+HeaderProtectionKey = $AWG_HEADER_PROTECTION_KEY
+ContentPaddingAddition = $AWG_CONTENT_PADDING_ADDITION
+RekeyAfterTime = $AWG_REKEY_AFTER_TIME
+RekeyTimeout = $AWG_REKEY_TIMEOUT
+RejectAfterTime = $AWG_REJECT_AFTER_TIME
+KeepaliveTimeout = $AWG_KEEPALIVE_TIMEOUT
+MaxHandshakeAttempts = $AWG_MAX_HANDSHAKE_ATTEMPTS
+RandomTrailers = $AWG_RANDOM_TRAILERS
+DisableCookies = $AWG_DISABLE_COOKIES
 
 PostUp = sysctl -w net.ipv4.ip_forward=1; iptables -A FORWARD -i $AWG_IFACE -j ACCEPT; iptables -A FORWARD -o $AWG_IFACE -j ACCEPT; iptables -t nat -A POSTROUTING -s $VPN_SUBNET -o $WAN_IFACE -j MASQUERADE
 PostDown = iptables -D FORWARD -i $AWG_IFACE -j ACCEPT; iptables -D FORWARD -o $AWG_IFACE -j ACCEPT; iptables -t nat -D POSTROUTING -s $VPN_SUBNET -o $WAN_IFACE -j MASQUERADE
@@ -385,6 +465,7 @@ install_awg() {
 
   ask_install_params
   install_amneziawg_packages
+  require_awg31
   write_sysctl
   create_server_config
   open_ufw_port_if_active
@@ -397,6 +478,90 @@ install_awg() {
   warn "Если у провайдера есть внешний firewall/security group, откройте $SERVER_PORT/udp."
 }
 
+apply_awg31_params_to_config() {
+  local config="$1" tmp="${1}.awg31.tmp"
+  awk \
+    -v jc="$AWG_JC" -v jmin="$AWG_JMIN" -v jmax="$AWG_JMAX" \
+    -v s1="$AWG_S1" -v s2="$AWG_S2" -v s3="$AWG_S3" -v s4="$AWG_S4" \
+    -v h1="$AWG_H1" -v h2="$AWG_H2" -v h3="$AWG_H3" -v h4="$AWG_H4" \
+    -v hp="$AWG_HEADER_PROTECTION_KEY" -v padding="$AWG_CONTENT_PADDING_ADDITION" \
+    -v rekey="$AWG_REKEY_AFTER_TIME" -v rekey_timeout="$AWG_REKEY_TIMEOUT" \
+    -v reject="$AWG_REJECT_AFTER_TIME" -v keepalive="$AWG_KEEPALIVE_TIMEOUT" \
+    -v attempts="$AWG_MAX_HANDSHAKE_ATTEMPTS" -v trailers="$AWG_RANDOM_TRAILERS" \
+    -v cookies="$AWG_DISABLE_COOKIES" '
+    function params() {
+      print "Jc = " jc; print "Jmin = " jmin; print "Jmax = " jmax
+      print "S1 = " s1; print "S2 = " s2; print "S3 = " s3; print "S4 = " s4
+      print "H1 = " h1; print "H2 = " h2; print "H3 = " h3; print "H4 = " h4
+      print "HeaderProtectionKey = " hp
+      print "ContentPaddingAddition = " padding
+      print "RekeyAfterTime = " rekey; print "RekeyTimeout = " rekey_timeout
+      print "RejectAfterTime = " reject; print "KeepaliveTimeout = " keepalive
+      print "MaxHandshakeAttempts = " attempts
+      print "RandomTrailers = " trailers; print "DisableCookies = " cookies
+    }
+    BEGIN { in_interface=0; added=0 }
+    /^\[Interface\]$/ { in_interface=1; print; next }
+    in_interface && /^(Jc|Jmin|Jmax|S[1-4]|H[1-4]|HeaderProtectionKey|ContentPaddingAddition|RekeyAfterTime|RekeyTimeout|RejectAfterTime|KeepaliveTimeout|MaxHandshakeAttempts|RandomTrailers|DisableCookies) = / { next }
+    in_interface && /^$/ && !added { params(); print; added=1; in_interface=0; next }
+    in_interface && /^\[/ && !added { params(); print ""; added=1; in_interface=0 }
+    { print }
+    END { if (in_interface && !added) { print ""; params() } }
+  ' "$config" > "$tmp"
+  chmod --reference="$config" "$tmp"
+  mv "$tmp" "$config"
+}
+
+upgrade_to_awg31() {
+  if ! installed; then
+    err "AmneziaWG ещё не установлен. Используйте пункт 1."
+    return 1
+  fi
+
+  warn "Обновление изменит параметры сервера и всех сохранённых клиентских конфигов."
+  warn "До повторного импорта обновлённых конфигов клиенты подключаться не смогут."
+  read -rp "Введите UPGRADE для продолжения: " confirm
+  [[ "$confirm" == "UPGRADE" ]] || { warn "Отменено."; return 0; }
+
+  local backup_dir backup_file conf
+  backup_dir="/root/amneziawg-backups"
+  backup_file="$backup_dir/awg-before-3.1-$(date +%Y%m%d-%H%M%S).tar.gz"
+  install -d -m 0700 "$backup_dir"
+  tar -czf "$backup_file" "$AWG_DIR" "$CLIENT_DIR" "$MANAGER_CONF" 2>/dev/null || {
+    err "Не удалось создать резервную копию. Обновление остановлено."
+    return 1
+  }
+
+  install_amneziawg_packages
+  require_awg31 || return 1
+  load_vars
+  generate_awg_params
+  systemctl stop "awg-quick@$AWG_IFACE.service"
+  apply_awg31_params_to_config "$AWG_CONF"
+  shopt -s nullglob
+  for conf in "$CLIENT_DIR"/*.conf; do
+    apply_awg31_params_to_config "$conf"
+  done
+  shopt -u nullglob
+  save_vars
+  modprobe -r amneziawg 2>/dev/null || warn "Модуль занят; может потребоваться перезагрузка VDS."
+  modprobe amneziawg
+  systemctl start "awg-quick@$AWG_IFACE.service"
+
+  local loaded_version
+  loaded_version="$(cat /sys/module/amneziawg/version 2>/dev/null || true)"
+  if [[ ! "$loaded_version" =~ ^3\.1([.-]|$) ]]; then
+    warn "Загруженный модуль сообщает версию '${loaded_version:-не определена}'."
+    warn "Перезагрузите VDS и повторно проверьте /sys/module/amneziawg/version."
+  else
+    info "Версия загруженного модуля: $loaded_version"
+  fi
+
+  log "Сервер и сохранённые конфиги обновлены до профиля AmneziaWG 3.1."
+  info "Резервная копия: $backup_file"
+  warn "Заново импортируйте конфиги на всех устройствах в клиент с поддержкой 3.1."
+}
+
 vpn_prefix() {
   echo "${VPN_SUBNET%0/24}"
 }
@@ -407,7 +572,12 @@ client_ip_for_index() {
 }
 
 used_client_ips() {
-  grep -hE '^Address = ' "$CLIENT_DIR"/*.conf 2>/dev/null | awk '{print $3}' | cut -d/ -f1 || true
+  {
+    grep -hE '^Address = ' "$CLIENT_DIR"/*.conf 2>/dev/null | awk '{print $3}' | cut -d/ -f1 || true
+    if [[ -f "$AWG_CONF" ]]; then
+      grep -E '^AllowedIPs = ' "$AWG_CONF" | cut -d= -f2- | tr ',' '\n' | xargs -n1 2>/dev/null | cut -d/ -f1 || true
+    fi
+  } | sort -u
 }
 
 next_client_ip() {
@@ -425,7 +595,10 @@ next_client_ip() {
 
 restart_or_reload_awg() {
   if systemctl is-active --quiet "awg-quick@$AWG_IFACE.service"; then
-    systemctl restart "awg-quick@$AWG_IFACE.service"
+    if ! systemctl reload "awg-quick@$AWG_IFACE.service"; then
+      warn "Reload не удался, выполняю restart. Активные сессии будут переподключены."
+      systemctl restart "awg-quick@$AWG_IFACE.service"
+    fi
   else
     systemctl start "awg-quick@$AWG_IFACE.service"
   fi
@@ -445,7 +618,7 @@ client_allowed_ips() {
   mode="${mode:-1}"
 
   case "$mode" in
-    2) echo "0.0.0.0/0" ;;
+    2) echo "0.0.0.0/0, ::/0" ;;
     *) echo "$VPN_SUBNET" ;;
   esac
 }
@@ -458,7 +631,13 @@ create_client() {
 
   load_vars
 
-  local name ip allowed private public psk conf server_public
+  if [[ -z "$AWG_HEADER_PROTECTION_KEY" ]] || ! grep -q '^HeaderProtectionKey = ' "$AWG_CONF"; then
+    err "Сервер ещё использует старый профиль AmneziaWG."
+    err "Сначала выполните пункт 11 для обновления до 3.1."
+    return 1
+  fi
+
+  local name ip allowed private public psk conf server_public endpoint_host
   read -rp "Имя клиента, например pc1 или phone1: " name
   if ! valid_client_name "$name"; then
     err "Имя может содержать только A-Z, a-z, 0-9, _ и -, длина до 64 символов."
@@ -466,8 +645,8 @@ create_client() {
   fi
 
   conf="$CLIENT_DIR/$name.conf"
-  if [[ -f "$conf" ]]; then
-    err "Клиент '$name' уже существует: $conf"
+  if [[ -f "$conf" ]] || grep -Fqx "# BEGIN_CLIENT $name" "$AWG_CONF"; then
+    err "Клиент '$name' уже существует в клиентском или серверном конфиге."
     return 1
   fi
 
@@ -477,6 +656,7 @@ create_client() {
   public="$(echo "$private" | awg pubkey)"
   psk="$(awg genpsk)"
   server_public="$(cat "$(server_public_key_file)")"
+  endpoint_host="$(format_endpoint_host "$SERVER_PUBLIC_IP")"
 
   cat > "$conf" <<EOF
 [Interface]
@@ -494,12 +674,21 @@ H1 = $AWG_H1
 H2 = $AWG_H2
 H3 = $AWG_H3
 H4 = $AWG_H4
+HeaderProtectionKey = $AWG_HEADER_PROTECTION_KEY
+ContentPaddingAddition = $AWG_CONTENT_PADDING_ADDITION
+RekeyAfterTime = $AWG_REKEY_AFTER_TIME
+RekeyTimeout = $AWG_REKEY_TIMEOUT
+RejectAfterTime = $AWG_REJECT_AFTER_TIME
+KeepaliveTimeout = $AWG_KEEPALIVE_TIMEOUT
+MaxHandshakeAttempts = $AWG_MAX_HANDSHAKE_ATTEMPTS
+RandomTrailers = $AWG_RANDOM_TRAILERS
+DisableCookies = $AWG_DISABLE_COOKIES
 
 [Peer]
 PublicKey = $server_public
 PresharedKey = $psk
 AllowedIPs = $allowed
-Endpoint = $SERVER_PUBLIC_IP:$SERVER_PORT
+Endpoint = $endpoint_host:$SERVER_PORT
 PersistentKeepalive = 25
 EOF
   chmod 600 "$conf"
@@ -525,13 +714,37 @@ EOF
 
 remove_client_block() {
   local name="$1"
-  awk -v name="$name" '
+  local begin_count end_count backup
+  begin_count="$(grep -Fxc "# BEGIN_CLIENT $name" "$AWG_CONF" || true)"
+  end_count="$(grep -Fxc "# END_CLIENT $name" "$AWG_CONF" || true)"
+
+  if (( begin_count == 0 && end_count == 0 )); then
+    return 0
+  fi
+  if (( begin_count != 1 || end_count != 1 )); then
+    err "Повреждены маркеры клиента '$name' (BEGIN=$begin_count, END=$end_count)."
+    err "Серверный конфиг не изменён; исправьте маркеры вручную."
+    return 1
+  fi
+
+  backup="${AWG_CONF}.backup-$(date +%Y%m%d-%H%M%S)"
+  cp -a "$AWG_CONF" "$backup"
+  if ! awk -v name="$name" '
     $0 == "# BEGIN_CLIENT " name {skip=1; next}
     $0 == "# END_CLIENT " name {skip=0; next}
     skip != 1 {print}
-  ' "$AWG_CONF" > "$AWG_CONF.tmp"
-  mv "$AWG_CONF.tmp" "$AWG_CONF"
+    END { if (skip == 1) exit 2 }
+  ' "$AWG_CONF" > "$AWG_CONF.tmp"; then
+    rm -f "$AWG_CONF.tmp"
+    err "Не удалось безопасно удалить блок клиента; конфиг не изменён."
+    return 1
+  fi
+  if ! mv "$AWG_CONF.tmp" "$AWG_CONF"; then
+    cp -a "$backup" "$AWG_CONF"
+    return 1
+  fi
   chmod 600 "$AWG_CONF"
+  info "Резервная копия серверного конфига: $backup"
 }
 
 delete_client() {
@@ -555,7 +768,7 @@ delete_client() {
   read -rp "Точно удалить клиента '$name'? [y/N]: " confirm
   [[ "${confirm,,}" == "y" || "${confirm,,}" == "yes" ]] || { warn "Отменено."; return 0; }
 
-  remove_client_block "$name"
+  remove_client_block "$name" || return 1
   rm -f "$CLIENT_DIR/$name.conf"
   restart_or_reload_awg
 
@@ -625,11 +838,11 @@ setup_mail_sender() {
   apt-get update
   apt-get install -y --no-install-recommends msmtp msmtp-mta mutt ca-certificates
 
-  local smtp_host smtp_port smtp_user smtp_from smtp_pass
+  local smtp_host smtp_port smtp_user smtp_from smtp_pass tls_starttls
 
   read -rp "SMTP host, например smtp.gmail.com: " smtp_host
-  while [[ -z "$smtp_host" ]]; do
-    read -rp "SMTP host не может быть пустым: " smtp_host
+  while ! valid_smtp_value "$smtp_host"; do
+    read -rp "Введите корректный SMTP host без пробелов: " smtp_host
   done
 
   read -rp "SMTP port [587]: " smtp_port
@@ -639,8 +852,8 @@ setup_mail_sender() {
   done
 
   read -rp "SMTP user / login: " smtp_user
-  while [[ -z "$smtp_user" ]]; do
-    read -rp "SMTP user не может быть пустым: " smtp_user
+  while ! valid_smtp_value "$smtp_user"; do
+    read -rp "Введите корректный SMTP user без пробелов: " smtp_user
   done
 
   read -rp "From e-mail [$smtp_user]: " smtp_from
@@ -656,6 +869,12 @@ setup_mail_sender() {
     echo
   done
 
+  if [[ "$smtp_port" == "465" ]]; then
+    tls_starttls="off"
+  else
+    tls_starttls="on"
+  fi
+
   cat > "$MSMTP_PASS_FILE" <<EOF
 $smtp_pass
 EOF
@@ -665,7 +884,7 @@ EOF
 defaults
 auth on
 tls on
-tls_starttls on
+tls_starttls $tls_starttls
 tls_trust_file /etc/ssl/certs/ca-certificates.crt
 
 account default
@@ -781,7 +1000,12 @@ uninstall_awg() {
 
   systemctl disable --now "awg-quick@$AWG_IFACE.service" 2>/dev/null || true
 
-  rm -f "$SERVICE_FILE" "$SYSCTL_CONF" "$MANAGER_CONF"
+  load_vars
+  if command_exists ufw && ufw status 2>/dev/null | grep -qi "Status: active"; then
+    ufw --force delete allow "$SERVER_PORT/udp" 2>/dev/null || true
+  fi
+
+  rm -f "$SERVICE_FILE" "$SYSCTL_CONF" "$MANAGER_CONF" "$MSMTP_CONF" "$MSMTP_PASS_FILE" "$MUTT_CONF"
   rm -rf "$AWG_DIR" "$CLIENT_DIR"
 
   systemctl daemon-reload
@@ -794,10 +1018,17 @@ uninstall_awg() {
     apt-get autoremove -y || true
   fi
 
+  read -rp "Удалить PPA AmneziaWG и его keyring? [y/N]: " remove_ppa
+  if [[ "${remove_ppa,,}" == "y" || "${remove_ppa,,}" == "yes" ]]; then
+    rm -f /etc/apt/sources.list.d/amnezia-ppa.list /etc/apt/keyrings/amnezia-ppa.gpg
+    apt-get update || true
+  fi
+
   log "Удаление завершено."
 }
 
 print_banner() {
+  printf '%b' "$DARK_ORANGE"
   cat <<'EOF'
     ___                          _       _       __  ________
    /   |  ____ ___  ____  ___  _(_)___ _| |     / / / ____/ /
@@ -805,7 +1036,10 @@ print_banner() {
  / ___ |/ / / / / / / / /  __/ / / /_/ /| |/ |/ / / /_/ /_/  
 /_/  |_/_/ /_/ /_/_/ /_/\___/_/ /\__,_/ |__/|__/  \____(_)   
                             /___/                             
-              VDS Manager v2.0
+EOF
+  printf '%b' "$NC"
+  cat <<'EOF'
+       VDS Manager v3.0 / AmneziaWG 3.1
 EOF
 }
 
@@ -826,6 +1060,7 @@ menu() {
     echo "8) Показать логи"
     echo "9) Настроить SMTP для отправки конфигов"
     echo "10) Отправить конфиг клиента на e-mail"
+    echo "11) Обновить существующую установку до AmneziaWG 3.1"
     echo "0) Выход"
     echo "----------------------------------------"
     read -rp "Выберите пункт: " choice
@@ -841,6 +1076,7 @@ menu() {
       8) show_logs; pause ;;
       9) setup_mail_sender; pause ;;
       10) send_client_config_email; pause ;;
+      11) upgrade_to_awg31; pause ;;
       0) exit 0 ;;
       *) warn "Неверный пункт"; pause ;;
     esac
