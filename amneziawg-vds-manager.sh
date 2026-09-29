@@ -7,7 +7,7 @@
 set -Eeuo pipefail
 
 APP_NAME="AmneziaWG VDS Manager"
-MANAGER_VERSION="3.0"
+MANAGER_VERSION="3.0.1"
 AWG_PROTOCOL_VERSION="3.1"
 
 AWG_IFACE="awg0"
@@ -1070,9 +1070,7 @@ print_banner() {
                             /___/                             
 EOF
   printf '%b' "$NC"
-  cat <<'EOF'
-       VDS Manager v3.0 / AmneziaWG 3.1
-EOF
+  printf '       VDS Manager v%s / AmneziaWG %s\n' "$MANAGER_VERSION" "$AWG_PROTOCOL_VERSION"
 }
 
 menu() {
