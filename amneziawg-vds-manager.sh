@@ -341,8 +341,11 @@ install_amneziawg_packages() {
     warn "Пакет linux-headers-$(uname -r) не найден. Установка модуля DKMS может не пройти."
   fi
 
-  log "Устанавливаю AmneziaWG..."
-  apt-get install -y amneziawg
+  log "Устанавливаю и обновляю AmneziaWG tools/DKMS..."
+  # Указываем пакеты явно: apt может считать метапакет amneziawg актуальным
+  # и оставить ранее установленный amneziawg-dkms старой версии.
+  apt-get install -y amneziawg amneziawg-tools amneziawg-dkms
+  depmod -a
 
   if ! command_exists awg || ! command_exists awg-quick; then
     err "После установки не найдены awg/awg-quick. Проверьте вывод apt."
@@ -351,14 +354,42 @@ install_amneziawg_packages() {
 }
 
 require_awg31() {
-  local version
-  version="$(awg --version 2>/dev/null || true)"
-  if [[ ! "$version" =~ v?3\.1([.-]|$) ]]; then
-    err "Установлен пакет без поддержки AmneziaWG 3.1: ${version:-версия не определена}"
+  local tools_version disk_module_version loaded_module_version
+  tools_version="$(awg --version 2>/dev/null || true)"
+  if [[ ! "$tools_version" =~ v?3\.1([.-]|$) ]]; then
+    err "Установлены tools без поддержки AmneziaWG 3.1: ${tools_version:-версия не определена}"
     err "Проверьте актуальность пакетов в PPA amnezia/ppa."
     return 1
   fi
-  info "Версия инструментов: $version"
+
+  disk_module_version="$(modinfo -F version amneziawg 2>/dev/null || true)"
+  if [[ ! "$disk_module_version" =~ ^3\.1([.-]|$) ]]; then
+    err "Модуль AmneziaWG на диске не поддерживает 3.1: ${disk_module_version:-не найден}"
+    apt-cache policy amneziawg-dkms || true
+    return 1
+  fi
+
+  # После обновления DKMS старый модуль может оставаться загруженным в ядре.
+  if [[ -d /sys/module/amneziawg ]]; then
+    loaded_module_version="$(cat /sys/module/amneziawg/version 2>/dev/null || true)"
+    if [[ "$loaded_module_version" != "$disk_module_version" ]]; then
+      info "Перезагружаю модуль ядра: ${loaded_module_version:-неизвестно} -> $disk_module_version"
+      if ! modprobe -r amneziawg; then
+        err "Старый модуль занят. Остановите существующие AWG-интерфейсы или перезагрузите VDS."
+        return 1
+      fi
+    fi
+  fi
+
+  modprobe amneziawg
+  loaded_module_version="$(cat /sys/module/amneziawg/version 2>/dev/null || true)"
+  if [[ ! "$loaded_module_version" =~ ^3\.1([.-]|$) ]]; then
+    err "В ядро загружен несовместимый модуль: ${loaded_module_version:-версия не определена}"
+    return 1
+  fi
+
+  info "Версия инструментов: $tools_version"
+  info "Версия модуля: $loaded_module_version"
 }
 
 write_systemd_unit() {
@@ -533,10 +564,13 @@ upgrade_to_awg31() {
   }
 
   install_amneziawg_packages
-  require_awg31 || return 1
+  systemctl stop "awg-quick@$AWG_IFACE.service"
+  if ! require_awg31; then
+    systemctl start "awg-quick@$AWG_IFACE.service" 2>/dev/null || true
+    return 1
+  fi
   load_vars
   generate_awg_params
-  systemctl stop "awg-quick@$AWG_IFACE.service"
   apply_awg31_params_to_config "$AWG_CONF"
   shopt -s nullglob
   for conf in "$CLIENT_DIR"/*.conf; do
@@ -544,8 +578,6 @@ upgrade_to_awg31() {
   done
   shopt -u nullglob
   save_vars
-  modprobe -r amneziawg 2>/dev/null || warn "Модуль занят; может потребоваться перезагрузка VDS."
-  modprobe amneziawg
   systemctl start "awg-quick@$AWG_IFACE.service"
 
   local loaded_version

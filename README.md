@@ -353,6 +353,32 @@ ping 10.66.0.3
 
 Если сервер пингует клиентов, клиенты пингуют сервер, и клиенты пингуют друг друга по адресам `10.66.0.x`, VPN-сетка работает.
 
+## Ошибка `Unable to modify interface: Invalid argument`
+
+Если `awg setconf` завершается этой ошибкой, сначала сравни версии tools, модуля на диске и модуля, загруженного в ядро:
+
+```bash
+awg --version
+modinfo -F version amneziawg
+cat /sys/module/amneziawg/version 2>/dev/null
+apt-cache policy amneziawg-dkms
+```
+
+Для профиля AmneziaWG 3.1 все три версии должны поддерживать 3.1. Если tools уже имеют версию 3.1, а модуль показывает 1.0, обнови DKMS и перезагрузи модуль:
+
+```bash
+sudo apt update
+sudo apt install -y amneziawg amneziawg-tools amneziawg-dkms
+sudo dkms autoinstall -k "$(uname -r)"
+sudo depmod -a
+sudo systemctl stop awg-quick@awg0.service
+sudo modprobe -r amneziawg
+sudo modprobe amneziawg
+sudo systemctl start awg-quick@awg0.service
+```
+
+Если модуль занят и не выгружается, перезагрузи VDS, затем снова проверь версии и сервис.
+
 ## Диагностика UDP
 
 На сервере можно посмотреть входящие пакеты:
