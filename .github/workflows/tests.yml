@@ -33,7 +33,7 @@ jobs:
         run: bash -n amneziawg-vds-manager.sh tests/test_functions.sh
 
       - name: Run ShellCheck
-        run: shellcheck amneziawg-vds-manager.sh tests/test_functions.sh
+        run: shellcheck -x amneziawg-vds-manager.sh tests/test_functions.sh
 
       - name: Run function tests
         run: bash tests/test_functions.sh
