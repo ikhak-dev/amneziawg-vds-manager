@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 ikhak-dev
 # AmneziaWG 3.1 profile with e-mail delivery of client configs
 # AmneziaWG VDS Manager
 # Ubuntu/Debian helper for installing/removing AmneziaWG and managing client configs.
@@ -913,8 +915,17 @@ show_client() {
 
 setup_mail_sender() {
   echo
+  warn "ВНИМАНИЕ: SMTP отправляет клиентский .conf через сторонний почтовый сервис."
+  warn "В конфиге находится приватный ключ: ошибочный адрес получателя даст постороннему доступ к VPN."
+  warn "Используйте отдельный пароль приложения, проверяйте адрес перед отправкой и удаляйте клиента при подозрении на утечку."
+  warn "SMTP-пароль будет храниться на этой VDS в отдельном файле с правами доступа 600."
+  read -rp "Продолжить настройку SMTP? [y/N]: " smtp_confirm
+  case "$smtp_confirm" in
+    y|Y|yes|YES) ;;
+    *) warn "Настройка SMTP отменена."; return 0 ;;
+  esac
+
   info "Настройка отправки клиентских конфигов на e-mail через внешний SMTP."
-  warn "Клиентский .conf содержит приватный ключ. Отправляйте его только владельцу устройства."
 
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
@@ -957,11 +968,12 @@ setup_mail_sender() {
     tls_starttls="on"
   fi
 
+  install -m 0600 /dev/null "$MSMTP_PASS_FILE"
   cat > "$MSMTP_PASS_FILE" <<EOF
 $smtp_pass
 EOF
-  chmod 600 "$MSMTP_PASS_FILE"
 
+  install -m 0600 /dev/null "$MSMTP_CONF"
   cat > "$MSMTP_CONF" <<EOF
 defaults
 auth on
@@ -976,15 +988,14 @@ from $smtp_from
 user $smtp_user
 passwordeval cat $MSMTP_PASS_FILE
 EOF
-  chmod 600 "$MSMTP_CONF"
 
+  install -m 0600 /dev/null "$MUTT_CONF"
   cat > "$MUTT_CONF" <<EOF
 set sendmail="/usr/bin/msmtp"
 set use_from=yes
 set realname="$APP_NAME"
 set from="$smtp_from"
 EOF
-  chmod 600 "$MUTT_CONF"
 
   log "SMTP-настройка сохранена."
   info "Файл настроек: $MSMTP_CONF"
@@ -1169,4 +1180,6 @@ main() {
   menu
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

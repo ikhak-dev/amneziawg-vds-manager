@@ -1,0 +1,46 @@
+name: Tests
+
+on:
+  push:
+    branches:
+      - v3.0
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shell-tests:
+    name: Shell tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-22.04
+          - ubuntu-24.04
+          - ubuntu-26.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Validate Bash syntax
+        run: bash -n amneziawg-vds-manager.sh tests/test_functions.sh
+
+      - name: Run ShellCheck
+        run: shellcheck amneziawg-vds-manager.sh tests/test_functions.sh
+
+      - name: Run function tests
+        run: bash tests/test_functions.sh
+
+      - name: Verify licensing metadata
+        run: |
+          test -f LICENSE
+          test -f THIRD_PARTY_NOTICES.md
+          grep -q '^# SPDX-License-Identifier: MIT$' amneziawg-vds-manager.sh
+          grep -q '^Copyright (c) 2026 ikhak-dev$' LICENSE
