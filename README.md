@@ -1,5 +1,7 @@
 # AmneziaWG VDS Manager
 
+[Русский](README.md) | [English](README.en.md)
+
 [![Tests](https://github.com/ikhak-dev/amneziawg-vds-manager/actions/workflows/tests.yml/badge.svg?branch=v3.0)](https://github.com/ikhak-dev/amneziawg-vds-manager/actions/workflows/tests.yml)
 [![Security audit](https://github.com/ikhak-dev/amneziawg-vds-manager/actions/workflows/security-audit.yml/badge.svg?branch=v3.0)](https://github.com/ikhak-dev/amneziawg-vds-manager/actions/workflows/security-audit.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-darkorange.svg)](LICENSE)

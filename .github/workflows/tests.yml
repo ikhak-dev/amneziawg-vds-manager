@@ -44,5 +44,7 @@ jobs:
         run: |
           test -f LICENSE
           test -f THIRD_PARTY_NOTICES.md
+          test -f README.en.md
           grep -q '^# SPDX-License-Identifier: MIT$' amneziawg-vds-manager.sh
           grep -q '^Copyright (c) 2026 ikhak-dev$' LICENSE
+          grep -q 'Current manager version: \*\*v3.0.2\*\*' README.en.md
