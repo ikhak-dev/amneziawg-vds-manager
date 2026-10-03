@@ -9,7 +9,7 @@
 set -Eeuo pipefail
 
 APP_NAME="AmneziaWG VDS Manager"
-MANAGER_VERSION="3.0.1"
+MANAGER_VERSION="3.0.2"
 AWG_PROTOCOL_VERSION="3.1"
 
 AWG_IFACE="awg0"

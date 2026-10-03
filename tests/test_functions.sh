@@ -6,6 +6,13 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=amneziawg-vds-manager.sh
 source "$ROOT_DIR/amneziawg-vds-manager.sh"
 
+if [[ "$MANAGER_VERSION" == "3.0.2" ]]; then
+  printf 'ok - release version is 3.0.2\n'
+else
+  printf 'not ok - release version is 3.0.2\n'
+  exit 1
+fi
+
 failures=0
 
 expect_success() {

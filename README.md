@@ -1,5 +1,9 @@
 # AmneziaWG VDS Manager
 
+[![Tests](https://github.com/ikhak-dev/amneziawg-vds-manager/actions/workflows/tests.yml/badge.svg?branch=v3.0)](https://github.com/ikhak-dev/amneziawg-vds-manager/actions/workflows/tests.yml)
+[![Security audit](https://github.com/ikhak-dev/amneziawg-vds-manager/actions/workflows/security-audit.yml/badge.svg?branch=v3.0)](https://github.com/ikhak-dev/amneziawg-vds-manager/actions/workflows/security-audit.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-darkorange.svg)](LICENSE)
+
 Интерактивный bash-скрипт для установки и управления AmneziaWG на Debian/Ubuntu VDS.
 
 Скрипт рассчитан на схему, где VDS выступает центральным VPN-сервером, а ПК, ноутбуки и телефоны подключаются к нему как клиенты и получают внутренние VPN-IP.
@@ -7,10 +11,10 @@
 ## Версия
 
 ```text
-v3.0.1
+v3.0.2
 ```
 
-Версия менеджера `v3.0.1` создаёт конфигурации для протокола **AmneziaWG 3.1**, сохраняет отправку клиентских `.conf` файлов через внешний SMTP и исправляет обновление устаревшего DKMS-модуля.
+Версия менеджера `v3.0.2` создаёт конфигурации для протокола **AmneziaWG 3.1**, сохраняет отправку клиентских `.conf` файлов через внешний SMTP, исправляет обновление устаревшего DKMS-модуля и включает автоматический аудит безопасности.
 
 Профиль 3.1 включает `HeaderProtectionKey`, случайное дополнение трафика, изменяемые интервалы, `RandomTrailers` и `DisableCookies`. Клиентские приложения старых версий такой конфиг не поддерживают.
 
@@ -474,3 +478,16 @@ grep -n "resolvconf\|apt-key\|software-properties-common\|python3-launchpadlib" 
 Собственный код менеджера распространяется по лицензии [MIT](LICENSE).
 
 Менеджер является независимым проектом и не связан с AmneziaVPN и WireGuard. Он устанавливает и вызывает сторонние компоненты, которые распространяются отдельно на условиях собственных лицензий. Подробности приведены в [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+## Проверка качества и безопасности
+
+Для ветки `v3.0` автоматически выполняются:
+
+- проверка синтаксиса Bash и анализ ShellCheck;
+- функциональные тесты на Ubuntu 22.04, 24.04 и 26.04;
+- поиск случайно опубликованных секретов во всей Git-истории через Gitleaks;
+- поиск секретов и опасных конфигураций через Trivy;
+- проверка GitHub Actions через actionlint и zizmor;
+- оценка настроек репозитория через OpenSSF Scorecard.
+
+Актуальный статус показывают значки в начале README. Конфигурации проверок находятся в [`.github/workflows`](.github/workflows).
