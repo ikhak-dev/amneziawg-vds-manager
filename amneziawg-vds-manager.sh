@@ -209,7 +209,7 @@ valid_smtp_value() {
 
 format_endpoint_host() {
   local host="$1"
-  if [[ "$host" == *:* && "$host" != \[*\] ]]; then
+  if [[ "$host" == *:* && "${host:0:1}" != "[" ]]; then
     printf '[%s]' "$host"
   else
     printf '%s' "$host"
