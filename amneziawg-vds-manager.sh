@@ -314,6 +314,46 @@ deb-src [signed-by=$keyring] https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu
 EOF
 }
 
+show_amneziawg_dkms_log() {
+  local build_log
+  build_log="$(find /var/lib/dkms/amneziawg -type f -name make.log 2>/dev/null | sort | tail -n 1)"
+  if [[ -n "$build_log" ]]; then
+    err "Последние строки журнала сборки DKMS ($build_log):"
+    tail -n 80 "$build_log" || true
+  fi
+}
+
+ensure_current_kernel_headers() {
+  local kernel headers_package
+  kernel="$(uname -r)"
+  headers_package="linux-headers-$kernel"
+
+  if [[ -e "/lib/modules/$kernel/build/Makefile" ]]; then
+    return 0
+  fi
+
+  if apt-cache show "$headers_package" >/dev/null 2>&1; then
+    log "Устанавливаю заголовки текущего ядра $kernel..."
+    if apt-get install -y "$headers_package" && [[ -e "/lib/modules/$kernel/build/Makefile" ]]; then
+      return 0
+    fi
+  fi
+
+  warn "Для запущенного ядра $kernel нет доступных заголовков."
+  if [[ "${ID:-}" == "ubuntu" ]]; then
+    log "Устанавливаю согласованное ядро Ubuntu и заголовки..."
+    apt-get install -y linux-generic
+  else
+    log "Устанавливаю согласованное ядро Debian и заголовки..."
+    apt-get install -y linux-image-amd64 linux-headers-amd64
+  fi
+
+  err "Для завершения установки требуется загрузиться с нового ядра."
+  info "Выполните: reboot"
+  info "После перезагрузки снова запустите этот скрипт."
+  return 1
+}
+
 install_amneziawg_packages() {
   require_supported_os
 
@@ -334,18 +374,28 @@ install_amneziawg_packages() {
   fi
 
   apt-get update
-
-  if apt-cache show "linux-headers-$(uname -r)" >/dev/null 2>&1; then
-    apt-get install -y "linux-headers-$(uname -r)" || warn "Не удалось установить linux-headers для текущего ядра."
-  else
-    warn "Пакет linux-headers-$(uname -r) не найден. Установка модуля DKMS может не пройти."
-  fi
+  ensure_current_kernel_headers
 
   log "Устанавливаю и обновляю AmneziaWG tools/DKMS..."
   # Указываем пакеты явно: apt может считать метапакет amneziawg актуальным
   # и оставить ранее установленный amneziawg-dkms старой версии.
   apt-get install -y amneziawg amneziawg-tools amneziawg-dkms
+
+  log "Собираю модуль AmneziaWG для ядра $(uname -r)..."
+  if ! dkms autoinstall -k "$(uname -r)"; then
+    err "DKMS не смог собрать модуль AmneziaWG для текущего ядра."
+    dkms status || true
+    show_amneziawg_dkms_log
+    return 1
+  fi
   depmod -a
+
+  if ! modinfo amneziawg >/dev/null 2>&1; then
+    err "DKMS завершился без ошибки, но модуль amneziawg для ядра $(uname -r) не найден."
+    dkms status || true
+    show_amneziawg_dkms_log
+    return 1
+  fi
 
   if ! command_exists awg || ! command_exists awg-quick; then
     err "После установки не найдены awg/awg-quick. Проверьте вывод apt."
