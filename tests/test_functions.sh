@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# shellcheck source=../amneziawg-vds-manager.sh
+# shellcheck source=amneziawg-vds-manager.sh
 source "$ROOT_DIR/amneziawg-vds-manager.sh"
 
 failures=0
